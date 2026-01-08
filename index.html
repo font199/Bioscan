@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BioScan - Vegà o No?</title>
+    <!-- QuaggaJS per un control total de la càmera -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        #interactive.viewport {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+        
+        #interactive.viewport canvas, #interactive.viewport video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        .custom-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .guide-box {
+            width: 85%;
+            height: 40%; 
+            border: 4px solid #10b981;
+            border-radius: 2rem;
+            box-shadow: 0 0 0 5000px rgba(0,0,0,0.6); 
+            position: relative;
+        }
+
+        .scan-line {
+            position: absolute;
+            width: 90%;
+            left: 5%;
+            height: 3px;
+            background: #10b981;
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.8);
+            top: 50%;
+            animation: scanLineMove 2.5s ease-in-out infinite;
+        }
+
+        @keyframes scanLineMove {
+            0%, 100% { transform: translateY(-60px); opacity: 0.3; }
+            50% { transform: translateY(60px); opacity: 1; }
+        }
+
+        .drawingBuffer { display: none !important; }
+
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #10b981;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-900 pb-10">
+
+    <header class="bg-white border-b border-slate-100 p-4 sticky top-0 z-[110]">
+        <div class="max-w-md mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-black text-emerald-600 italic tracking-tighter">
+                🌿 BIOSCAN
+            </h1>
+            <button onclick="toggleHistory()" class="bg-slate-100 p-2 rounded-xl text-slate-600 active:scale-90 transition-transform">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <main class="max-w-md mx-auto p-4">
+        
+        <!-- Vista Escàner -->
+        <div id="view-scanner" class="space-y-4">
+            <div id="camera-container" class="relative bg-black rounded-[3rem] shadow-2xl overflow-hidden aspect-[4/5] flex items-center justify-center border-4 border-white">
+                
+                <div id="start-btn-container" class="absolute inset-0 flex items-center justify-center z-50 bg-black/40">
+                    <button id="start-btn" onclick="initScannerSequence()" class="bg-emerald-500 text-white px-8 py-5 rounded-full font-black shadow-2xl active:scale-95 transition-transform flex items-center gap-3 border-2 border-white/20">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        INICIAR ESCÀNER
+                    </button>
+                </div>
+
+                <div id="loading-screen" class="absolute inset-0 flex flex-col items-center justify-center z-[60] bg-white hidden">
+                    <div class="loader mb-4"></div>
+                    <p id="loading-text" class="font-black text-slate-800 animate-pulse tracking-widest text-xs uppercase text-center px-6">Analitzant producte...</p>
+                </div>
+                
+                <div id="interactive" class="viewport"></div>
+                <div id="overlay-guide" class="custom-overlay hidden">
+                    <div class="guide-box">
+                        <div class="scan-line"></div>
+                    </div>
+                </div>
+            </div>
+            <p class="text-center text-slate-400 font-black text-[10px] tracking-[0.2em] uppercase">Centra el codi dins el rectangle</p>
+        </div>
+
+        <!-- Vista Resultats -->
+        <div id="view-result" class="hidden animate-in fade-in slide-in-from-bottom-8 duration-500">
+            <div class="bg-white rounded-[3rem] shadow-2xl overflow-hidden border border-slate-100">
+                <div id="status-banner" class="p-10 text-center text-white">
+                    <div id="status-icon" class="text-7xl mb-4"></div>
+                    <h2 id="status-text" class="text-4xl font-extrabold italic uppercase tracking-tighter leading-none"></h2>
+                </div>
+                
+                <div class="p-8 space-y-6 text-center">
+                    <div class="flex flex-col items-center gap-4">
+                        <img id="res-img" src="" class="w-32 h-32 object-contain rounded-3xl bg-slate-50 border p-2 hidden">
+                        <div>
+                            <h3 id="res-name" class="text-2xl font-black text-slate-800 leading-tight"></h3>
+                            <p id="res-brand" class="text-emerald-600 font-bold uppercase text-[10px] tracking-widest"></p>
+                        </div>
+                    </div>
+
+                    <div id="analysis-box" class="rounded-[2rem] p-6 border-4">
+                        <h4 class="text-[10px] font-black uppercase mb-1 opacity-60 tracking-widest">VERDICTE</h4>
+                        <p id="res-analysis" class="text-xl font-black leading-tight"></p>
+                    </div>
+
+                    <button onclick="resetScanner()" class="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-lg shadow-xl active:scale-95 transition-all">
+                        ESCANEJA UN ALTRE
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vista Historial -->
+        <div id="view-history" class="hidden space-y-4">
+            <div class="flex justify-between items-center px-2">
+                <h2 class="text-3xl font-black text-slate-800 tracking-tighter">Historial</h2>
+                <button onclick="clearHistory()" class="text-xs font-bold text-rose-500 uppercase">Esborrar</button>
+            </div>
+            <div id="history-list" class="space-y-3"></div>
+            <button onclick="toggleHistory()" class="w-full py-5 bg-white border-2 border-slate-200 text-slate-800 rounded-[2rem] font-black mt-4 shadow-sm">TORNAR</button>
+        </div>
+
+    </main>
+
+    <script>
+        let history = JSON.parse(localStorage.getItem('bioscan_history') || '[]');
+        let isProcessing = false;
+
+        const nonVeganKeywords = [
+            'leche', 'llet', 'huevo', 'ou', 'miel', 'mel', 'carne', 'carn', 'pescado', 'peix', 
+            'queso', 'formatge', 'mantequilla', 'mantega', 'nata', 'yogur', 'iogurt', 'gelatina', 
+            'lactosa', 'suero', 'carmín', 'e120', 'e901', 'e904', 'manteca', 'llard', 'pollo', 'pollastre',
+            'bacon', 'pernil', 'jamon', 'atun', 'tonyina', 'merluza', 'lluç', 'gambas', 'gambes', 'ternera', 'vedella',
+            'atún', 'bacalao', 'bacallà', 'leche en polvo', 'proteína de leche', 'caseinato'
+        ];
+
+        window.onload = () => {
+            renderHistory();
+        };
+
+        // Funció per trobar la millor càmera posterior
+        async function getBestCamera() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                // Busquem càmeres posteriors (back)
+                let backCameras = videoDevices.filter(d => d.label.toLowerCase().includes('back'));
+                
+                if (backCameras.length > 0) {
+                    // Si n'hi ha vàries, solem preferir la que NO és wide/ultra-wide per codis de barres
+                    // La càmera principal sol ser la que té el label més simple o "0"
+                    return backCameras[0].deviceId;
+                }
+                return null; // Deixem que Quagga triï si no estem segurs
+            } catch (e) {
+                return null;
+            }
+        }
+
+        async function initScannerSequence() {
+            const deviceId = await getBestCamera();
+            initQuagga(deviceId);
+        }
+
+        function initQuagga(deviceId) {
+            document.getElementById('start-btn-container').classList.add('hidden');
+            document.getElementById('overlay-guide').classList.remove('hidden');
+            document.getElementById('loading-screen').classList.add('hidden');
+
+            const constraints = {
+                facingMode: "environment",
+                width: { min: 640, ideal: 1280, max: 1920 },
+                height: { min: 480, ideal: 720, max: 1080 },
+                aspectRatio: { ideal: 1.7777777778 }
+            };
+
+            if (deviceId) {
+                constraints.deviceId = { exact: deviceId };
+            }
+
+            Quagga.init({
+                inputStream: {
+                    name: "Live",
+                    type: "LiveStream",
+                    target: document.querySelector('#interactive'),
+                    constraints: constraints,
+                },
+                decoder: {
+                    readers: ["ean_reader", "ean_8_reader", "upc_reader", "code_128_reader"],
+                    multiple: false
+                },
+                locate: true,
+                halfSample: true,
+                patchSize: "large",
+                numOfWorkers: navigator.hardwareConcurrency || 4
+            }, function(err) {
+                if (err) {
+                    console.error(err);
+                    alert("Error càmera: " + err);
+                    document.getElementById('start-btn-container').classList.remove('hidden');
+                    return;
+                }
+                
+                // Intentem forçar l'autoenfocament continu si el navegador ho permet
+                const track = Quagga.CameraAccess.getActiveTrack();
+                if (track && typeof track.getCapabilities === 'function') {
+                    const capabilities = track.getCapabilities();
+                    if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+                        track.applyConstraints({
+                            advanced: [{ focusMode: 'continuous' }]
+                        });
+                    }
+                }
+                
+                Quagga.start();
+            });
+
+            Quagga.onDetected(onScanSuccess);
+        }
+
+        async function onScanSuccess(result) {
+            if (isProcessing) return;
+            
+            const code = result.codeResult.code;
+            if (!code || code.length < 8) return;
+
+            isProcessing = true;
+            if (window.navigator.vibrate) window.navigator.vibrate(60);
+            
+            Quagga.stop();
+            document.getElementById('loading-screen').classList.remove('hidden');
+            document.getElementById('loading-text').innerText = "Analitzant producte...";
+            document.getElementById('overlay-guide').classList.add('hidden');
+            
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+                const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,brands,ingredients_text_es,ingredients_text_ca,image_front_small_url,ingredients_analysis_tags`, { signal: controller.signal });
+                const data = await response.json();
+                clearTimeout(timeoutId);
+
+                if (data.status === 1 && data.product) {
+                    processProduct(data.product);
+                } else {
+                    showErrorToast(`Codi ${code} no trobat.`);
+                    setTimeout(resetScanner, 2500);
+                }
+            } catch (err) {
+                showErrorToast("Error: No hi ha resposta del servidor.");
+                setTimeout(resetScanner, 2500);
+            }
+        }
+
+        function showErrorToast(msg) {
+            const loader = document.querySelector('.loader');
+            if(loader) loader.style.display = 'none';
+            const loadingText = document.getElementById('loading-text');
+            loadingText.innerText = msg;
+            loadingText.classList.add('text-rose-500');
+        }
+
+        function processProduct(product) {
+            const name = product.product_name || "Producte sense nom";
+            const brand = product.brands || "SENSE MARCA";
+            const ingredients = (product.ingredients_text_es || product.ingredients_text_ca || "").toLowerCase();
+            const analysisTags = product.ingredients_analysis_tags || [];
+            
+            let status = "unknown";
+            let msg = "No hi ha prou dades per confirmar.";
+            
+            let firstDetectedIngredient = null;
+            let firstIndex = Infinity;
+
+            nonVeganKeywords.forEach(keyword => {
+                const index = ingredients.indexOf(keyword);
+                if (index !== -1 && index < firstIndex) {
+                    firstIndex = index;
+                    firstDetectedIngredient = keyword;
+                }
+            });
+
+            if (analysisTags.includes('en:vegan') && !firstDetectedIngredient) {
+                status = "vegan";
+                msg = "APTE. Aquest producte és 100% vegà.";
+            } else if (firstDetectedIngredient || analysisTags.includes('en:non-vegan')) {
+                status = "non-vegan";
+                const ingredientFound = firstDetectedIngredient ? firstDetectedIngredient.toUpperCase() : "DERIVAT ANIMAL";
+                msg = `NO APTE. S'ha detectat: "${ingredientFound}".`;
+            } else if (analysisTags.includes('en:vegetarian')) {
+                status = "vegetarian";
+                msg = "APTE PER A VEGETARIANS. Però conté lactis o derivats.";
+            } else if (ingredients.length > 5) {
+                status = "maybe";
+                msg = "Sembla apte, però millor revisar l'etiqueta.";
+            }
+
+            const productData = {
+                name, brand, status,
+                img: product.image_front_small_url,
+                analysis: msg,
+                date: new Date().getTime()
+            };
+
+            addToHistory(productData);
+            displayResult(productData);
+        }
+
+        function displayResult(data) {
+            document.getElementById('loading-screen').classList.add('hidden');
+            showView('result');
+            
+            document.getElementById('res-name').innerText = data.name;
+            document.getElementById('res-brand').innerText = data.brand;
+            document.getElementById('res-analysis').innerText = data.analysis;
+            
+            const imgEl = document.getElementById('res-img');
+            if (data.img) {
+                imgEl.src = data.img;
+                imgEl.classList.remove('hidden');
+            } else {
+                imgEl.classList.add('hidden');
+            }
+
+            const banner = document.getElementById('status-banner');
+            const icon = document.getElementById('status-icon');
+            const text = document.getElementById('status-text');
+            const box = document.getElementById('analysis-box');
+
+            switch(data.status) {
+                case 'vegan':
+                    banner.className = "p-10 text-center text-white bg-emerald-500";
+                    box.className = "rounded-[2rem] p-6 border-4 border-emerald-500 bg-emerald-50 text-emerald-700";
+                    icon.innerText = "✅"; text.innerText = "VEGÀ"; break;
+                case 'vegetarian':
+                    banner.className = "p-10 text-center text-white bg-amber-400";
+                    box.className = "rounded-[2rem] p-6 border-4 border-amber-400 bg-amber-50 text-amber-700";
+                    icon.innerText = "🧀"; text.innerText = "VEGETARIÀ"; break;
+                case 'non-vegan':
+                    banner.className = "p-10 text-center text-white bg-rose-500";
+                    box.className = "rounded-[2rem] p-6 border-4 border-rose-500 bg-rose-50 text-rose-700";
+                    icon.innerText = "❌"; text.innerText = "NO APTE"; break;
+                default:
+                    banner.className = "p-10 text-center text-white bg-slate-400";
+                    box.className = "rounded-[2rem] p-6 border-4 border-slate-400 bg-slate-50 text-slate-700";
+                    icon.innerText = "❓"; text.innerText = "DUBTÓS";
+            }
+        }
+
+        function showView(view) {
+            document.getElementById('view-scanner').classList.add('hidden');
+            document.getElementById('view-result').classList.add('hidden');
+            document.getElementById('view-history').classList.add('hidden');
+            if (view === 'scanner') document.getElementById('view-scanner').classList.remove('hidden');
+            if (view === 'result') document.getElementById('view-result').classList.remove('hidden');
+            if (view === 'history') document.getElementById('view-history').classList.remove('hidden');
+        }
+
+        function resetScanner() {
+            isProcessing = false;
+            showView('scanner');
+            document.getElementById('start-btn-container').classList.remove('hidden');
+            document.getElementById('overlay-guide').classList.add('hidden');
+            document.getElementById('loading-screen').classList.add('hidden');
+            
+            const loader = document.querySelector('.loader');
+            if(loader) loader.style.display = 'block';
+            const loadingText = document.getElementById('loading-text');
+            loadingText.classList.remove('text-rose-500');
+
+            document.getElementById('interactive').innerHTML = ""; 
+        }
+
+        function addToHistory(product) {
+            history = history.filter(h => h.name !== product.name);
+            history.unshift(product);
+            if (history.length > 20) history.pop();
+            localStorage.setItem('bioscan_history', JSON.stringify(history));
+            renderHistory();
+        }
+
+        function renderHistory() {
+            const list = document.getElementById('history-list');
+            if (history.length === 0) {
+                list.innerHTML = `<div class="text-center py-20 text-slate-300 font-black">HISTORIAL BUIT</div>`;
+                return;
+            }
+
+            list.innerHTML = history.map((item, index) => `
+                <div onclick="viewHistoryItem(${index})" class="bg-white p-5 rounded-[2rem] shadow-sm flex items-center gap-4 border border-slate-100 active:scale-95 transition-transform">
+                    <div class="text-3xl">${getStatusEmoji(item.status)}</div>
+                    <div class="flex-1 min-w-0">
+                        <h4 class="font-black text-slate-800 text-sm truncate uppercase tracking-tighter">${item.name}</h4>
+                        <p class="text-[9px] text-slate-400 font-black uppercase tracking-widest">${item.brand}</p>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function getStatusEmoji(status) {
+            if (status === 'vegan') return '✅';
+            if (status === 'vegetarian') return '🧀';
+            if (status === 'non-vegan') return '❌';
+            return '❓';
+        }
+
+        function viewHistoryItem(index) {
+            displayResult(history[index]);
+        }
+
+        async function toggleHistory() {
+            if (!document.getElementById('view-history').classList.contains('hidden')) {
+                resetScanner();
+            } else {
+                try { Quagga.stop(); } catch(e) {}
+                showView('history');
+            }
+        }
+
+        function clearHistory() {
+            if (confirm("Vols esborrar tot l'historial?")) {
+                history = [];
+                localStorage.removeItem('bioscan_history');
+                renderHistory();
+            }
+        }
+    </script>
+</body>
+</html>
